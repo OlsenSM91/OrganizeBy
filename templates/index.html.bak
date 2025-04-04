@@ -1,0 +1,266 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrganizeBy - Upload & Sort</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      padding: 0;
+      max-width: 900px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    header {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    header img {
+      max-height: 60px;
+    }
+    input, button {
+      width: 100%;
+      margin: 8px 0;
+      padding: 10px;
+    }
+    .file-progress, .toast {
+      transition: opacity 0.6s ease-in-out;
+    }
+    .progress-container {
+      margin-top: 20px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    .toast {
+      padding: 12px;
+      background-color: #333;
+      color: white;
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      border-radius: 5px;
+      opacity: 0;
+      z-index: 9999;
+    }
+    .toast.show {
+      opacity: 1;
+    }
+    #drop-area {
+      border: 2px dashed #ccc;
+      padding: 20px;
+      text-align: center;
+      margin: 15px 0;
+    }
+    #drop-area.dragover {
+      background-color: #f0f8ff;
+    }
+    @media (max-width: 768px) {
+      input, button { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="/static/logo.png" alt="OrganizeBy Logo">
+  </header>
+
+  <h2>OrganizeBy: Upload & Sort</h2>
+
+  <div id="drop-area">
+    <p>Drag and drop files here or use the form below</p>
+  </div>
+
+  <form id="uploadForm">
+    <label>CSV File:</label>
+    <input type="file" id="csv_file" accept=".csv" required>
+
+    <label>Image Files (max 2000MB total):</label>
+    <input type="file" id="image_files" accept=".jpg,.jpeg,.png,.tiff,.tif,.psd,.pdf" multiple required>
+
+    <label>Team Column:</label>
+    <input type="text" id="team_col" value="Team" required>
+
+    <label>Photo Column:</label>
+    <input type="text" id="photo_col" value="Photo" required>
+
+    <label>Storage Days (1–3):</label>
+    <input type="number" id="storage_days" min="1" max="3" value="1" required>
+
+    <button type="submit">Upload & Sort</button>
+  </form>
+
+  <div id="overallContainer" class="progress-container" style="display:none;">
+    <label>Overall Progress:</label>
+    <progress id="overallProgress" value="0" max="100"></progress>
+  </div>
+
+  <div id="fileProgressContainer" class="progress-container"></div>
+  <div id="sortingIndicator" style="display:none; font-style: italic;">Sorting in progress...</div>
+  <p id="status"></p>
+  <div id="manualDownload" style="display:none;"><a id="downloadLink" href="#" download>Click here to download your ZIP if it didn't start automatically.</a></div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const MAX_MB = 2000;
+    const toast = document.getElementById('toast');
+
+    function showToast(msg, timeout = 3000) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), timeout);
+    }
+
+    const dropArea = document.getElementById('drop-area');
+    dropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropArea.classList.add('dragover');
+    });
+    dropArea.addEventListener('dragleave', () => {
+      dropArea.classList.remove('dragover');
+    });
+    dropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropArea.classList.remove('dragover');
+      const files = [...e.dataTransfer.files];
+      const csv = files.find(f => f.name.toLowerCase().endsWith('.csv'));
+      const allowedExt = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.psd', '.pdf'];
+      const images = files.filter(f => allowedExt.some(ext => f.name.toLowerCase().endsWith(ext)));
+      if (csv) document.getElementById('csv_file').files = createFileList([csv]);
+      if (images.length) document.getElementById('image_files').files = createFileList(images);
+    });
+
+    function createFileList(files) {
+      const dt = new DataTransfer();
+      files.forEach(file => dt.items.add(file));
+      return dt.files;
+    }
+
+    const form = document.getElementById('uploadForm');
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+
+      const csvFile = document.getElementById('csv_file').files[0];
+      const imageFiles = document.getElementById('image_files').files;
+      const teamCol = document.getElementById('team_col').value;
+      const photoCol = document.getElementById('photo_col').value;
+      const storageDays = document.getElementById('storage_days').value;
+
+      if (!csvFile || imageFiles.length === 0) {
+        return showToast('Please select a CSV and at least one image file.');
+      }
+
+      const totalSizeMB = [...imageFiles].reduce((acc, f) => acc + f.size, csvFile.size) / (1024 * 1024);
+      if (totalSizeMB > MAX_MB) {
+        return showToast('Total upload exceeds 2000MB.');
+      }
+
+      const csvForm = new FormData();
+      csvForm.append("csv_file", csvFile);
+      csvForm.append("team_col", teamCol);
+      csvForm.append("photo_col", photoCol);
+      csvForm.append("storage_days", storageDays);
+
+      let sessionId;
+      try {
+        const res = await fetch('/upload_csv', { method: 'POST', body: csvForm });
+        if (!res.ok) {
+          const err = await res.json();
+          return showToast(`CSV upload failed: ${err.detail}`);
+        }
+        const data = await res.json();
+        sessionId = data.session_id;
+      } catch (err) {
+        return showToast('CSV upload failed unexpectedly.');
+      }
+
+      const container = document.getElementById('fileProgressContainer');
+      const overallProgress = document.getElementById('overallProgress');
+      const overallContainer = document.getElementById('overallContainer');
+      const sorting = document.getElementById('sortingIndicator');
+
+      container.innerHTML = '';
+      overallProgress.value = 0;
+      overallContainer.style.display = 'block';
+      sorting.style.display = 'none';
+
+      let complete = 1;
+      const total = imageFiles.length + 1;
+
+      for (let i = 0; i < imageFiles.length; i++) {
+        const formData = new FormData();
+        formData.append("image_file", imageFiles[i]);
+        formData.append("session_id", sessionId);
+
+        const fileProgress = document.createElement('progress');
+        fileProgress.max = 100;
+        fileProgress.value = 0;
+        const label = document.createElement('label');
+        label.textContent = imageFiles[i].name;
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(label);
+        wrapper.appendChild(fileProgress);
+        container.appendChild(wrapper);
+
+        if (container.children.length > 10) {
+          container.children[0].style.opacity = 0;
+          setTimeout(() => container.children[0].remove(), 500);
+        }
+
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/upload_image", true);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              fileProgress.value = (e.loaded / e.total) * 100;
+            }
+          };
+          xhr.onload = () => {
+            fileProgress.value = 100;
+            complete++;
+            overallProgress.value = (complete / total) * 100;
+            resolve();
+          };
+          xhr.onerror = () => {
+            showToast(`Failed to upload ${imageFiles[i].name}`);
+            reject();
+          };
+          xhr.send(formData);
+        });
+      }
+
+      sorting.style.display = 'block';
+      const sortRes = await fetch('/sort_and_download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+
+      if (sortRes.ok) {
+        const blob = await sortRes.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'sorted_photos.zip';
+        link.click();
+        document.getElementById('manualDownload').style.display = 'block';
+        document.getElementById('downloadLink').href = url;
+        sorting.style.display = 'none';
+        showToast('Upload and sorting complete!');
+      } else {
+        showToast('Sorting failed.');
+        sorting.style.display = 'none';
+      }
+    });
+  </script>
+</body>
+</html>
