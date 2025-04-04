@@ -2,6 +2,8 @@
 
 **OrganizeBy** is a web-based image sorting tool that allows users to upload a `.csv` and corresponding images, automatically organizing them into folders based on team/label columns and returning a ZIP archive of the sorted output.
 
+![OrganizeByWebApp](https://github.com/user-attachments/assets/fe957ef4-c116-4c4e-a7d6-68eccf1f664b)
+
 Ideal for photographers, schools, sports teams, and event managers who need to group photos based on identifiers like team names, class periods, or other custom tags.
 
 ---
